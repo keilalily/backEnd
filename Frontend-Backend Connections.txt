@@ -1,0 +1,16 @@
+Frontend: User selects a file (PDF, DOCX, etc.) and triggers an action to upload it.
+Frontend: Sends the file to the backend server via an API endpoint.
+Backend: Receives the file, processes it to count the pages using appropriate libraries.
+Backend: Sends the page count back to the frontend as a response.
+Frontend: Updates the UI to display the page count to the user.
+
+Example Workflow:
+
+Frontend (Flutter):
+User uploads a document (PDF, DOCX) using your Flutter app. The document is stored in Firebase Storage.
+
+Firebase Cloud Function (Optional):
+Triggered by the file upload event, a Cloud Function downloads the file, processes it (e.g., counts pages using pdf-lib or similar), and updates a Firestore document with metadata (like page count).
+
+Frontend (Flutter):
+Retrieves document metadata (including page count) from Firestore or directly from Firebase Storage, displaying it to the user.

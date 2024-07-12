@@ -1,0 +1,155 @@
+const express = require('express');
+const app = express();
+const multer = require('multer');
+const cors = require('cors');
+const fs = require('fs').promises;
+const path = require('path');
+const libre = require('libreoffice-convert');
+const { PDFDocument } = require('pdf-lib');
+const http = require('http');
+const WebSocket = require('ws');
+const pdfPrinter = require('pdf-to-printer');
+
+const upload = multer({ dest: 'uploads/' });
+
+app.use(cors());
+app.use(express.json()); // Parse JSON bodies
+
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+
+// Endpoint to handle file upload
+app.post('/upload', upload.single('file'), async (req, res) => {
+  try {
+    const { originalname, path: tempFilePath } = req.file;
+    let pdfPath = tempFilePath;
+
+    // Check file extension and convert if necessary
+    if (originalname.endsWith('.docx') || originalname.endsWith('.pptx')) {
+      pdfPath = path.join('uploads', originalname.replace(path.extname(originalname), '.pdf'));
+      
+      const fileBuffer = await fs.readFile(tempFilePath);
+      const pdfBuffer = await new Promise((resolve, reject) => {
+        libre.convert(fileBuffer, '.pdf', undefined, (err, done) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve(done);
+        });
+      });
+
+      await fs.writeFile(pdfPath, pdfBuffer);
+    }
+
+    // Prepare response data with basic file info
+    const responseData = {
+      fileName: originalname,
+      pdfPath: pdfPath
+    };
+
+    // Respond with JSON data
+    res.json(responseData);
+
+  } catch (error) {
+    console.error('Error uploading file:', error);
+    res.status(500).json({ error: 'Error uploading file' });
+  }
+});
+
+// Endpoint to handle printing with selected settings
+app.post('/print', async (req, res) => {
+  try {
+    const {
+      pdfPath,
+      paperSizeIndex,
+      colorIndex,
+      pagesIndex,
+      selectedPages,
+      resolutionIndex,
+      copies
+    } = req.body;
+
+    // Load PDF document and apply print settings
+    let pdfBytes = await fs.readFile(pdfPath);
+    let pdfDoc = await PDFDocument.load(pdfBytes);
+
+    // Apply print settings based on request body
+
+    // Adjust paper size (assuming two options: 0 for Letter, 1 for Legal)
+    if (paperSizeIndex === 1) {
+      const pages = pdfDoc.getPages();
+      for (let i = 0; i < pages.length; i++) {
+        const page = pages[i];
+        page.setSize(612, 1008); // Legal size in points (8.5" x 14")
+      }
+    }
+
+    // Convert colors to grayscale if selected
+    if (colorIndex === 1) {
+      const pages = pdfDoc.getPages();
+      for (let i = 0; i < pages.length; i++) {
+        const page = pages[i];
+        const { width, height } = page.getSize();
+        const grayscaleFilter = await pdfDoc.embedPdfFunction(`
+          /DeviceGray {
+            dup length 1 sub 0 exch get 1 mul
+            dup length 1 sub 0 exch get 2 mul
+            dup length 1 sub 0 exch get 3 mul
+            3 1 roll add add add 4 1 roll 0.2989 mul exch
+            1 1 roll 0.5870 mul add exch 0.1140 mul add
+          } bind
+        `);
+        page.setColorSpaces({ '/DeviceGray': grayscaleFilter });
+      }
+    }
+
+    // Handle specific pages to print
+    if (pagesIndex === 1 && selectedPages.length > 0) {
+      const pagesToRemove = [];
+      const pages = pdfDoc.getPages();
+      for (let i = 0; i < pages.length; i++) {
+        if (!selectedPages.includes(i + 1)) {
+          pagesToRemove.push(i);
+        }
+      }
+      // Remove pages in reverse order to avoid index issues
+      for (let i = pagesToRemove.length - 1; i >= 0; i--) {
+        pdfDoc.removePage(pagesToRemove[i]);
+      }
+    }
+
+    // Duplicate pages for multiple copies
+    if (copies > 1) {
+      const originalPages = pdfDoc.getPages();
+      for (let copy = 1; copy < copies; copy++) {
+        for (let i = 0; i < originalPages.length; i++) {
+          const copiedPage = await pdfDoc.copyPage(originalPages[i]);
+          pdfDoc.addPage(copiedPage);
+        }
+      }
+    }
+
+    // Save modified PDF bytes
+    pdfBytes = await pdfDoc.save();
+
+    // Clean up temporary file
+    await fs.unlink(pdfPath);
+
+    // Print the modified PDF
+    await pdfPrinter.print(pdfBytes);
+
+    // Respond with success message
+    res.json({ message: 'Printing successful' });
+
+  } catch (error) {
+    console.error('Error printing file:', error);
+    res.status(500).json({ error: 'Error printing file' });
+  }
+});
+
+// Server setup
+const IP_ADDRESS = '192.168.100.33'; // Replace with your server's IP address
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`Server is running on http://${IP_ADDRESS}:${PORT}`);
+});

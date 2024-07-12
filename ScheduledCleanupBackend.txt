@@ -1,0 +1,31 @@
+// Example scheduled cleanup script
+const fs = require('fs').promises;
+const path = require('path');
+
+const TEMP_DIR = 'uploads/';
+
+async function cleanupTemporaryFiles() {
+  try {
+    const files = await fs.readdir(TEMP_DIR);
+
+    for (const file of files) {
+      const filePath = path.join(TEMP_DIR, file);
+      const stat = await fs.stat(filePath);
+
+      // Check if file is older than threshold (e.g., 24 hours)
+      const thresholdTime = Date.now() - 24 * 60 * 60 * 1000;
+      if (stat.mtimeMs < thresholdTime) {
+        await fs.unlink(filePath);
+        console.log(`Deleted old file: ${filePath}`);
+      }
+    }
+  } catch (error) {
+    console.error('Error cleaning up temporary files:', error);
+  }
+}
+
+// Run cleanup every day at midnight (example)
+setInterval(cleanupTemporaryFiles, 24 * 60 * 60 * 1000); // Once per day
+
+// Optionally, run cleanup on startup to clean up any lingering files
+cleanupTemporaryFiles();
